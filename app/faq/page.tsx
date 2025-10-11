@@ -183,22 +183,6 @@ const FAQPage = () => {
 
       {/* Content */}
       <div className="flex-1 p-4 md:p-6 lg:p-8 max-w-5xl mx-auto w-full">
-        {/* Header Section */}
-        <div className="text-center mb-8 md:mb-12">
-          <div className="flex justify-center mb-4">
-            <div className="p-3 rounded-full border">
-              <HelpCircle className="w-8 h-8 md:w-10 md:h-10" />
-            </div>
-          </div>
-          <h2 className="text-2xl md:text-3xl font-bold mb-3">
-            How Can We Help You?
-          </h2>
-          <p className="text-sm md:text-base text-muted-foreground max-w-2xl mx-auto">
-            Find answers to common questions about using CareerSync, or reach
-            out to us if you need additional support.
-          </p>
-        </div>
-
         {/* Help Improve Section */}
         <Card className="mb-8 border-2">
           <CardHeader>
