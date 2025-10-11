@@ -2,7 +2,6 @@ import { NextResponse } from "next/server";
 import { google } from "googleapis";
 import { cookies } from "next/headers";
 import { supabase } from "@/lib/supabase";
-import { decrypt } from "@/lib/encryption";
 
 const oauth2Client = new google.auth.OAuth2(
   process.env.GOOGLE_CLIENT_ID,

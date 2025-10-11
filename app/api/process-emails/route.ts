@@ -3,18 +3,6 @@ import { google, gmail_v1 } from "googleapis";
 import { cookies } from "next/headers";
 import { Client } from "@gradio/client";
 
-interface GmailMessage {
-  id: string;
-  threadId: string;
-  snippet: string;
-  payload: {
-    headers: Array<{ name: string; value: string }>;
-    body?: { data?: string };
-    parts?: Array<{ body?: { data?: string }; mimeType?: string }>;
-  };
-  internalDate: string;
-}
-
 interface ClassificationResult {
   label: string;
   score: number;
@@ -25,14 +13,6 @@ interface ExtractionResult {
   company: string;
   role: string;
   success?: boolean;
-}
-
-interface EmailMetadata {
-  from: string;
-  subject: string;
-  date: Date;
-  body: string;
-  snippet: string;
 }
 
 function sendProgress(
