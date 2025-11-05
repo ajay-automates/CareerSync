@@ -1,5 +1,5 @@
 "use client";
-import React, { useState, useEffect, useRef } from "react";
+import React, { useEffect, useRef } from "react";
 import { motion } from "framer-motion";
 import Image from "next/image";
 import Link from "next/link";
@@ -11,7 +11,6 @@ import {
   Rocket,
   Settings,
   Sparkles,
-  X,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ShootingStars } from "@/components/ui/shooting-stars";
@@ -24,25 +23,51 @@ import {
   SheetTrigger,
 } from "@/components/ui/sheet";
 
-// Type declarations for Rive
+interface RiveConfig {
+  src: string;
+  canvas: HTMLCanvasElement;
+  autoplay: boolean;
+  stateMachines: string;
+  layout: RiveLayout;
+  onLoad?: () => void;
+}
+
+interface RiveLayout {
+  fit: string;
+  alignment: string;
+}
+
+interface LayoutConfig {
+  fit: string;
+  alignment: string;
+}
+
+interface RiveInstance {
+  resizeDrawingSurfaceToCanvas: () => void;
+  cleanup: () => void;
+}
+
 declare global {
   interface Window {
     rive?: {
-      Rive: any;
-      Layout: any;
-      Fit: any;
-      Alignment: any;
+      Rive: new (config: RiveConfig) => RiveInstance;
+      Layout: new (config: LayoutConfig) => RiveLayout;
+      Fit: {
+        Contain: string;
+      };
+      Alignment: {
+        Center: string;
+      };
     };
   }
 }
 
 const RiveRocket = () => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const riveInstanceRef = useRef<any>(null);
+  const riveInstanceRef = useRef<RiveInstance | null>(null);
 
   useEffect(() => {
     const loadRive = async () => {
-      // Load Rive runtime
       const script = document.createElement("script");
       script.src = "https://unpkg.com/@rive-app/canvas@2.7.0";
       script.async = true;
@@ -206,7 +231,6 @@ const LandingPage = () => {
 
   return (
     <div className="min-h-screen bg-black text-white w-screen">
-      {/* Navigation */}
       <motion.nav
         initial={{ y: -100 }}
         animate={{ y: 0 }}
@@ -233,7 +257,6 @@ const LandingPage = () => {
               <h1 className="text-xl font-bold gradient-text">CareerSync</h1>
             </motion.div>
 
-            {/* Desktop Links */}
             <div className="hidden sm:flex items-center space-x-6">
               <motion.a
                 whileHover={{ scale: 1.05, y: -2 }}
@@ -259,13 +282,11 @@ const LandingPage = () => {
               </motion.a>
             </div>
 
-            {/* Mobile Sidebar */}
             <MobileSidebar />
           </div>
         </div>
       </motion.nav>
 
-      {/* Hero Section */}
       <section className="heroGrid relative overflow-hidden">
         <RiveRocket />
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-20 lg:py-32 relative z-10">
@@ -333,7 +354,6 @@ const LandingPage = () => {
         <StarsBackground />
       </section>
 
-      {/* Features Section */}
       <section id="features" className="py-20 lg:py-32">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <motion.div
@@ -416,7 +436,6 @@ const LandingPage = () => {
         </div>
       </section>
 
-      {/* How It Works Section */}
       <section id="how-it-works" className="py-20 lg:py-32 bg-gray-900/50">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <motion.div
@@ -490,7 +509,6 @@ const LandingPage = () => {
         </div>
       </section>
 
-      {/* Footer */}
       <footer className="border-t mt-auto bg-background">
         <div className="container mx-auto px-4 py-6">
           <div className="flex flex-col md:flex-row justify-between items-center space-y-4 md:space-y-0">
