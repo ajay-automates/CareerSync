@@ -148,13 +148,12 @@ const CLASSIFICATION_PATTERNS: Array<{
 ];
 
 function classifyEmail(text: string): ClassificationResult {
-  const lowerText = text.toLowerCase();
   let bestLabel = "other";
   let bestScore = 0;
 
   for (const pattern of CLASSIFICATION_PATTERNS) {
     let matchCount = 0;
-    let totalPatterns = pattern.subjectPatterns.length + pattern.bodyPatterns.length;
+    const totalPatterns = pattern.subjectPatterns.length + pattern.bodyPatterns.length;
 
     for (const re of pattern.subjectPatterns) {
       if (re.test(text)) matchCount += 2; // Subject matches weighted higher
