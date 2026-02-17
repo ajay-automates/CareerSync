@@ -1,6 +1,7 @@
 import { type NextRequest, NextResponse } from "next/server";
 import { google, gmail_v1 } from "googleapis";
 import { cookies } from "next/headers";
+import Groq from "groq-sdk";
 
 interface ClassificationResult {
   label: string;
@@ -12,6 +13,11 @@ interface ExtractionResult {
   company: string;
   role: string;
   success: boolean;
+}
+
+interface LLMResult {
+  classification: ClassificationResult;
+  extraction: ExtractionResult;
 }
 
 function sendProgress(
@@ -261,6 +267,103 @@ function classifyEmailsBatch(
   return { classifications, extractions };
 }
 
+// --- Groq LLM Classification ---
+
+const groqClient = process.env.GROQ_API_KEY
+  ? new Groq({ apiKey: process.env.GROQ_API_KEY })
+  : null;
+
+async function classifyWithLLM(
+  text: string,
+  from: string,
+  subject: string
+): Promise<LLMResult> {
+  if (!groqClient) throw new Error("Groq client not available");
+
+  const prompt = `Analyze this email and determine if it's related to a job application. Return a JSON object with these exact fields:
+
+{
+  "label": one of "applied", "rejected", "interview", "next-phase", "offer", or "other",
+  "confidence": number between 0 and 1,
+  "company": company name (string),
+  "role": job title/role (string)
+}
+
+Classification rules:
+- "applied": Confirmation that an application was received/submitted
+- "rejected": The application was declined/not selected
+- "interview": Invitation to interview, phone screen, coding challenge, or assessment
+- "next-phase": Moving to the next stage of the hiring process
+- "offer": A job offer or offer letter
+- "other": Not related to a job application at all (newsletters, promotions, personal emails, etc.)
+
+From: ${from}
+Subject: ${subject}
+
+Email body:
+${text.substring(0, 1500)}
+
+Return ONLY the JSON object, nothing else.`;
+
+  const response = await groqClient.chat.completions.create({
+    model: "llama-3.3-70b-versatile",
+    messages: [{ role: "user", content: prompt }],
+    response_format: { type: "json_object" },
+    temperature: 0.1,
+    max_tokens: 200,
+  });
+
+  const content = response.choices[0]?.message?.content;
+  if (!content) throw new Error("Empty LLM response");
+
+  const parsed = JSON.parse(content);
+  const label = ["applied", "rejected", "interview", "next-phase", "offer", "other"].includes(parsed.label)
+    ? parsed.label
+    : "other";
+  const confidence = typeof parsed.confidence === "number" ? Math.min(Math.max(parsed.confidence, 0), 1) : 0.5;
+
+  return {
+    classification: {
+      label,
+      score: confidence,
+      success: label !== "other",
+    },
+    extraction: {
+      company: parsed.company || "Unknown",
+      role: parsed.role || "Unknown",
+      success: true,
+    },
+  };
+}
+
+async function classifyBatchWithLLM(
+  emails: Array<{ text: string; id: string; metadata: { from: string; subject: string } }>,
+  progressCallback?: (current: number, total: number) => void
+): Promise<{ classifications: Map<string, ClassificationResult>; extractions: Map<string, ExtractionResult> }> {
+  const classifications = new Map<string, ClassificationResult>();
+  const extractions = new Map<string, ExtractionResult>();
+
+  for (let i = 0; i < emails.length; i++) {
+    const email = emails[i];
+    try {
+      const result = await classifyWithLLM(email.text, email.metadata.from, email.metadata.subject);
+      classifications.set(email.id, result.classification);
+      extractions.set(email.id, result.extraction);
+    } catch (err) {
+      console.warn(`LLM failed for email ${email.id}, falling back to keywords:`, err);
+      classifications.set(email.id, classifyEmail(email.text));
+      extractions.set(email.id, extractJobInfo(email.text, email.metadata.from, email.metadata.subject));
+    }
+    progressCallback?.(i + 1, emails.length);
+    // Small delay to respect Groq rate limits on free tier
+    if (i < emails.length - 1) {
+      await new Promise((r) => setTimeout(r, 100));
+    }
+  }
+
+  return { classifications, extractions };
+}
+
 function extractEmailBody(payload: gmail_v1.Schema$MessagePart): string {
   const extractFromPart = (part: gmail_v1.Schema$MessagePart): string => {
     let text = "";
@@ -441,18 +544,34 @@ export async function POST(request: NextRequest) {
           });
         }
 
-        sendProgress(encoder, controller, "Classifying emails", 40, 100);
-        const { classifications, extractions } = classifyEmailsBatch(
-          emailsForClassification,
-          (c, t) =>
-            sendProgress(
-              encoder,
-              controller,
-              `Classifying (${c}/${t})`,
-              40 + (c / t) * 50,
-              100
-            )
+        const useLLM = !!groqClient;
+        sendProgress(
+          encoder,
+          controller,
+          useLLM ? "Classifying emails with AI" : "Classifying emails",
+          40,
+          100
         );
+
+        const { classifications, extractions } = useLLM
+          ? await classifyBatchWithLLM(emailsForClassification, (c, t) =>
+              sendProgress(
+                encoder,
+                controller,
+                `AI classifying (${c}/${t})`,
+                40 + (c / t) * 50,
+                100
+              )
+            )
+          : classifyEmailsBatch(emailsForClassification, (c, t) =>
+              sendProgress(
+                encoder,
+                controller,
+                `Classifying (${c}/${t})`,
+                40 + (c / t) * 50,
+                100
+              )
+            );
 
         const jobRelated = [];
         for (const email of emailsForClassification) {

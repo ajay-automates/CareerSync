@@ -36,6 +36,7 @@
     "date-fns": "^4.1.0",
     "exceljs": "^4.4.0",
     "googleapis": "^153.0.0",
+    "groq-sdk": "^0.37.0",
     "js-base64": "^3.7.7",
     "lucide-react": "^0.525.0",
     "motion": "^12.23.22",
