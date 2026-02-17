@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import { persist } from "zustand/middleware";
+import { createJSONStorage, persist } from "zustand/middleware";
 
 export type JobStatus =
   | "applied"
@@ -182,6 +182,14 @@ export const useApplicationStore = create<ApplicationStore>()(
     }),
     {
       name: "job-application-storage",
+      storage: createJSONStorage(() => localStorage, {
+        reviver: (key, value) => {
+          if ((key === "startDate" || key === "endDate" || key === "date") && value) {
+            return new Date(value as string);
+          }
+          return value;
+        },
+      }),
       partialize: (state) => ({
         applications: state.applications,
         excludedEmails: state.excludedEmails,
