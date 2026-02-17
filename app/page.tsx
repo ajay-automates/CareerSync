@@ -67,30 +67,44 @@ const RiveRocket = () => {
   const riveInstanceRef = useRef<RiveInstance | null>(null);
 
   useEffect(() => {
-    const loadRive = async () => {
-      const script = document.createElement("script");
-      script.src = "https://unpkg.com/@rive-app/canvas@2.7.0";
-      script.async = true;
+    let script: HTMLScriptElement | null = null;
 
-      script.onload = () => {
-        if (canvasRef.current && window.rive) {
-          riveInstanceRef.current = new window.rive.Rive({
-            src: "/rocket.riv",
-            canvas: canvasRef.current,
-            autoplay: true,
-            stateMachines: "State Machine 1",
-            layout: new window.rive.Layout({
-              fit: window.rive.Fit.Contain,
-              alignment: window.rive.Alignment.Center,
-            }),
-            onLoad: () => {
-              riveInstanceRef.current?.resizeDrawingSurfaceToCanvas();
-            },
-          });
-        }
-      };
+    const loadRive = () => {
+      try {
+        script = document.createElement("script");
+        script.src = "https://unpkg.com/@rive-app/canvas@2.7.0";
+        script.async = true;
 
-      document.body.appendChild(script);
+        script.onload = () => {
+          try {
+            if (canvasRef.current && window.rive) {
+              riveInstanceRef.current = new window.rive.Rive({
+                src: "/rocket.riv",
+                canvas: canvasRef.current,
+                autoplay: true,
+                stateMachines: "State Machine 1",
+                layout: new window.rive.Layout({
+                  fit: window.rive.Fit.Contain,
+                  alignment: window.rive.Alignment.Center,
+                }),
+                onLoad: () => {
+                  riveInstanceRef.current?.resizeDrawingSurfaceToCanvas();
+                },
+              });
+            }
+          } catch (e) {
+            console.warn("Failed to initialize Rive:", e);
+          }
+        };
+
+        script.onerror = () => {
+          console.warn("Failed to load Rive script");
+        };
+
+        document.body.appendChild(script);
+      } catch (e) {
+        console.warn("Failed to load Rive:", e);
+      }
     };
 
     loadRive();
@@ -98,6 +112,9 @@ const RiveRocket = () => {
     return () => {
       if (riveInstanceRef.current) {
         riveInstanceRef.current.cleanup();
+      }
+      if (script && script.parentNode) {
+        script.parentNode.removeChild(script);
       }
     };
   }, []);
