@@ -1,18 +1,17 @@
 import { type NextRequest, NextResponse } from "next/server";
 import { google, gmail_v1 } from "googleapis";
 import { cookies } from "next/headers";
-import { Client } from "@gradio/client";
 
 interface ClassificationResult {
   label: string;
   score: number;
-  success?: boolean;
+  success: boolean;
 }
 
 interface ExtractionResult {
   company: string;
   role: string;
-  success?: boolean;
+  success: boolean;
 }
 
 function sendProgress(
@@ -32,84 +31,235 @@ function sendProgress(
   controller.enqueue(encoder.encode(`data: ${JSON.stringify(progress)}\n\n`));
 }
 
-async function classifyEmailsBatch(
-  emails: Array<{ text: string; id: string }>,
-  progressCallback?: (current: number, total: number) => void
-): Promise<Map<string, ClassificationResult>> {
-  const results = new Map<string, ClassificationResult>();
-  const maxBatchSize = 100;
-  const spaceUrl = process.env.HUGGINGFACE_SPACE_URL;
-  if (!spaceUrl) throw new Error("HuggingFace Space URL not configured");
+// Keyword-based email classifier (no external ML service needed)
+const CLASSIFICATION_PATTERNS: Array<{
+  label: string;
+  subjectPatterns: RegExp[];
+  bodyPatterns: RegExp[];
+  weight: number;
+}> = [
+  {
+    label: "rejected",
+    subjectPatterns: [
+      /unfortunately/i,
+      /regret to inform/i,
+      /not (been )?selected/i,
+      /unable to (move|proceed|offer)/i,
+      /position (has been |was )?filled/i,
+      /not moving forward/i,
+      /application.*update/i,
+    ],
+    bodyPatterns: [
+      /we (will not|won't) be (moving|proceeding)/i,
+      /after careful (consideration|review)/i,
+      /decided (not )?to (move|proceed|go) (forward )?with other/i,
+      /not (been )?selected/i,
+      /regret to inform/i,
+      /unfortunately/i,
+      /wish you (the )?best/i,
+      /other candidates/i,
+      /position has been filled/i,
+      /we('ve| have) decided to (pursue|move forward with) other/i,
+    ],
+    weight: 0.9,
+  },
+  {
+    label: "interview",
+    subjectPatterns: [
+      /interview/i,
+      /schedule.*call/i,
+      /phone screen/i,
+      /coding (challenge|assessment|test)/i,
+      /technical (screen|interview|assessment)/i,
+      /meet.*team/i,
+      /availability/i,
+    ],
+    bodyPatterns: [
+      /schedule.*interview/i,
+      /like to (invite|schedule)/i,
+      /phone (screen|call|interview)/i,
+      /video (call|interview)/i,
+      /technical (assessment|screen|interview|challenge)/i,
+      /coding (challenge|test|assessment)/i,
+      /available.*for.*call/i,
+      /would you be available/i,
+      /calendly/i,
+      /book.*time/i,
+      /meet.*team/i,
+      /next (round|step|stage)/i,
+    ],
+    weight: 0.85,
+  },
+  {
+    label: "offer",
+    subjectPatterns: [
+      /offer (letter)?/i,
+      /congratulations/i,
+      /welcome (to|aboard)/i,
+      /job offer/i,
+    ],
+    bodyPatterns: [
+      /pleased to (offer|extend)/i,
+      /offer (of employment|letter)/i,
+      /congratulations/i,
+      /welcome (to the team|aboard)/i,
+      /start date/i,
+      /compensation/i,
+      /annual salary/i,
+      /we('d| would) like to offer/i,
+    ],
+    weight: 0.95,
+  },
+  {
+    label: "applied",
+    subjectPatterns: [
+      /application (received|confirmed|submitted)/i,
+      /thank(s| you) for (applying|your (application|interest))/i,
+      /we('ve| have) received your/i,
+      /confirmation/i,
+    ],
+    bodyPatterns: [
+      /thank(s| you) for (applying|your (application|interest|submission))/i,
+      /application (has been |was )?(received|submitted)/i,
+      /we('ve| have) received your (application|resume)/i,
+      /reviewing (your |all )?(application|candidate)/i,
+      /will (review|be in touch)/i,
+      /application.*under review/i,
+    ],
+    weight: 0.8,
+  },
+  {
+    label: "next-phase",
+    subjectPatterns: [
+      /next (step|phase|stage|round)/i,
+      /moving forward/i,
+      /advancement/i,
+    ],
+    bodyPatterns: [
+      /moving (you )?forward/i,
+      /next (step|phase|stage|round)/i,
+      /pleased to (inform|let you know)/i,
+      /advanced to/i,
+      /progressed to/i,
+      /like to (move|advance)/i,
+    ],
+    weight: 0.85,
+  },
+];
 
-  const client = await Client.connect(spaceUrl);
-  for (let i = 0; i < emails.length; i += maxBatchSize) {
-    const batch = emails.slice(i, i + maxBatchSize);
-    progressCallback?.(i, emails.length);
+function classifyEmail(text: string): ClassificationResult {
+  const lowerText = text.toLowerCase();
+  let bestLabel = "other";
+  let bestScore = 0;
 
-    const emailTexts = batch.map((email) => email.text);
-    const result = await client.predict("/classify_batch", {
-      emails_json: JSON.stringify(emailTexts),
-    });
+  for (const pattern of CLASSIFICATION_PATTERNS) {
+    let matchCount = 0;
+    let totalPatterns = pattern.subjectPatterns.length + pattern.bodyPatterns.length;
 
-    const batchData = JSON.parse(result.data as string);
-    if (!batchData.results || !Array.isArray(batchData.results))
-      throw new Error(batchData.error || "Invalid batch response format");
+    for (const re of pattern.subjectPatterns) {
+      if (re.test(text)) matchCount += 2; // Subject matches weighted higher
+    }
+    for (const re of pattern.bodyPatterns) {
+      if (re.test(text)) matchCount += 1;
+    }
 
-    batch.forEach((email, index) => {
-      const res = batchData.results[index];
-      results.set(email.id, {
-        label: res?.label || "other",
-        score: res?.score || 0,
-        success: res?.success ?? false,
-      });
-    });
-
-    if (i + maxBatchSize < emails.length)
-      await new Promise((r) => setTimeout(r, 1000));
+    const score = Math.min((matchCount / totalPatterns) * pattern.weight, 1);
+    if (score > bestScore) {
+      bestScore = score;
+      bestLabel = pattern.label;
+    }
   }
 
-  progressCallback?.(emails.length, emails.length);
-  return results;
+  return {
+    label: bestLabel,
+    score: bestScore,
+    success: bestScore > 0.05,
+  };
 }
 
-async function extractJobInfoBatch(
-  emails: Array<{ text: string; id: string }>,
-  progressCallback?: (current: number, total: number) => void
-): Promise<Map<string, ExtractionResult>> {
-  const results = new Map<string, ExtractionResult>();
-  const maxBatchSize = 100;
-  const spaceUrl = process.env.HUGGINGFACE_SPACE_URL;
-  if (!spaceUrl) throw new Error("HuggingFace Space URL not configured");
+// Extract company name and role from email text
+function extractJobInfo(text: string, from: string, subject: string): ExtractionResult {
+  let company = "Unknown";
+  let role = "Unknown";
 
-  const client = await Client.connect(spaceUrl);
-  for (let i = 0; i < emails.length; i += maxBatchSize) {
-    const batch = emails.slice(i, i + maxBatchSize);
-    progressCallback?.(i, emails.length);
-
-    const emailTexts = batch.map((email) => email.text);
-    const result = await client.predict("/extract_batch", {
-      emails_json: JSON.stringify(emailTexts),
-    });
-
-    const batchData = JSON.parse(result.data as string);
-    if (!batchData.results || !Array.isArray(batchData.results))
-      throw new Error(batchData.error || "Invalid batch response format");
-
-    batch.forEach((email, index) => {
-      const res = batchData.results[index];
-      results.set(email.id, {
-        company: res?.company || "Unknown",
-        role: res?.role || "Unknown",
-        success: res?.success ?? false,
-      });
-    });
-
-    if (i + maxBatchSize < emails.length)
-      await new Promise((r) => setTimeout(r, 1000));
+  // Try to extract company from sender email domain
+  const emailMatch = from.match(/@([^.>]+)\./);
+  if (emailMatch) {
+    const domain = emailMatch[1];
+    // Skip generic email providers
+    const genericDomains = ["gmail", "yahoo", "hotmail", "outlook", "aol", "mail", "icloud", "protonmail"];
+    if (!genericDomains.includes(domain.toLowerCase())) {
+      company = domain.charAt(0).toUpperCase() + domain.slice(1);
+    }
   }
 
-  progressCallback?.(emails.length, emails.length);
-  return results;
+  // Try to extract company from "From" display name
+  const displayNameMatch = from.match(/^"?([^"<]+)"?\s*</);
+  if (displayNameMatch) {
+    const displayName = displayNameMatch[1].trim();
+    // If display name looks like a company (not a person's name)
+    if (displayName.includes("Team") || displayName.includes("Recruiting") ||
+        displayName.includes("Careers") || displayName.includes("HR") ||
+        displayName.includes("Talent") || displayName.includes("Hiring")) {
+      const companyFromName = displayName
+        .replace(/(Team|Recruiting|Careers|HR|Talent|Hiring|Jobs|Recruitment)/gi, "")
+        .trim();
+      if (companyFromName.length > 1) company = companyFromName;
+    } else if (company === "Unknown") {
+      // Use display name as fallback
+      company = displayName;
+    }
+  }
+
+  // Try to extract role from subject line
+  const rolePatterns = [
+    /(?:for|re:|regarding|about)\s+(?:the\s+)?(?:position\s+(?:of\s+)?)?(.+?)(?:\s+(?:position|role|at|-))/i,
+    /(?:application|applied|interview|offer)\s+(?:for\s+)?(?:the\s+)?(.+?)(?:\s+(?:position|role|at|-))/i,
+    /(software|senior|junior|lead|staff|principal|full[- ]?stack|front[- ]?end|back[- ]?end|data|product|project|engineering|design|marketing|sales|devops|cloud|ml|ai|mobile|ios|android|web|qa|test|security)\s+\w+(?:\s+\w+)?/i,
+  ];
+
+  for (const re of rolePatterns) {
+    const match = subject.match(re);
+    if (match) {
+      role = match[1]?.trim() || match[0]?.trim() || role;
+      if (role.length > 50) role = role.substring(0, 50);
+      break;
+    }
+  }
+
+  // Try extracting role from body text
+  if (role === "Unknown") {
+    const bodyRolePatterns = [
+      /(?:position|role|opportunity)\s+(?:of|for|as)\s+(?:a\s+)?(.+?)(?:\.|,|\n)/i,
+      /(?:applied for|applying for|interest in)\s+(?:the\s+)?(?:a\s+)?(.+?)(?:\s+(?:position|role|at|\.|\n))/i,
+    ];
+    for (const re of bodyRolePatterns) {
+      const match = text.match(re);
+      if (match && match[1]) {
+        role = match[1].trim();
+        if (role.length > 50) role = role.substring(0, 50);
+        break;
+      }
+    }
+  }
+
+  return { company, role, success: true };
+}
+
+function classifyEmailsBatch(
+  emails: Array<{ text: string; id: string; metadata: { from: string; subject: string } }>,
+  progressCallback?: (current: number, total: number) => void
+): { classifications: Map<string, ClassificationResult>; extractions: Map<string, ExtractionResult> } {
+  const classifications = new Map<string, ClassificationResult>();
+  const extractions = new Map<string, ExtractionResult>();
+
+  emails.forEach((email, index) => {
+    classifications.set(email.id, classifyEmail(email.text));
+    extractions.set(email.id, extractJobInfo(email.text, email.metadata.from, email.metadata.subject));
+    progressCallback?.(index + 1, emails.length);
+  });
+
+  return { classifications, extractions };
 }
 
 function extractEmailBody(payload: gmail_v1.Schema$MessagePart): string {
@@ -186,7 +336,7 @@ export async function POST(request: NextRequest) {
           startDate,
           endDate,
           excludedEmails = [],
-          classificationThreshold = 0.5,
+          classificationThreshold = 0.05,
           jobLabels = [
             "applied",
             "rejected",
@@ -200,7 +350,6 @@ export async function POST(request: NextRequest) {
           "GOOGLE_CLIENT_ID",
           "GOOGLE_CLIENT_SECRET",
           "GOOGLE_REDIRECT_URI",
-          "HUGGINGFACE_SPACE_URL",
         ];
         for (const envVar of requiredEnv)
           if (!process.env[envVar]) throw new Error(`${envVar} not configured`);
@@ -294,14 +443,14 @@ export async function POST(request: NextRequest) {
         }
 
         sendProgress(encoder, controller, "Classifying emails", 40, 100);
-        const classifications = await classifyEmailsBatch(
+        const { classifications, extractions } = classifyEmailsBatch(
           emailsForClassification,
           (c, t) =>
             sendProgress(
               encoder,
               controller,
               `Classifying (${c}/${t})`,
-              40 + (c / t) * 20,
+              40 + (c / t) * 50,
               100
             )
         );
@@ -315,23 +464,6 @@ export async function POST(request: NextRequest) {
             cls.score >= classificationThreshold;
           if (isJob) jobRelated.push(email);
         }
-
-        sendProgress(
-          encoder,
-          controller,
-          `Extracting job info (${jobRelated.length} emails)`,
-          70,
-          100
-        );
-        const extractions = await extractJobInfoBatch(jobRelated, (c, t) =>
-          sendProgress(
-            encoder,
-            controller,
-            `Extracting (${c}/${t})`,
-            70 + (c / t) * 20,
-            100
-          )
-        );
 
         const applications = jobRelated.map((email) => {
           const cls = classifications.get(email.id);

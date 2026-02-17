@@ -183,8 +183,10 @@ export const useApplicationStore = create<ApplicationStore>()(
     {
       name: "job-application-storage",
       partialize: (state) => ({
+        applications: state.applications,
         excludedEmails: state.excludedEmails,
-        // Don't persist auth state - it should be checked fresh each session
+        startDate: state.startDate,
+        endDate: state.endDate,
       }),
     }
   )
