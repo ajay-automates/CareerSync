@@ -89,12 +89,6 @@ export async function GET(request: NextRequest) {
 
     // Set cookies
     const cookieStore = await cookies();
-    cookieStore.set("gmail_access_token", tokens.access_token || "", {
-      httpOnly: true,
-      secure: process.env.NODE_ENV === "production",
-      maxAge: 3600,
-    });
-
     cookieStore.set("user_id", userId, {
       httpOnly: true,
       secure: process.env.NODE_ENV === "production",

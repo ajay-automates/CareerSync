@@ -6,8 +6,7 @@ export async function POST() {
     const cookieStore = await cookies();
 
     // Clear all auth-related cookies
-    cookieStore.delete("gmail_access_token");
-    cookieStore.delete("gmail_refresh_token");
+    cookieStore.delete("user_id");
     cookieStore.delete("user_email");
 
     return NextResponse.json({

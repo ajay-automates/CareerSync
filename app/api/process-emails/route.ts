@@ -2,6 +2,8 @@ import { type NextRequest, NextResponse } from "next/server";
 import { google, gmail_v1 } from "googleapis";
 import { cookies } from "next/headers";
 import Groq from "groq-sdk";
+import { supabase } from "@/lib/supabase";
+import { decrypt } from "@/lib/encryption";
 
 interface ClassificationResult {
   label: string;
@@ -466,9 +468,21 @@ export async function POST(request: NextRequest) {
         if (start >= end) throw new Error("Start date must be before end date");
 
         const cookieStore = await cookies();
-        const accessToken = cookieStore.get("gmail_access_token")?.value;
-        const refreshToken = cookieStore.get("gmail_refresh_token")?.value;
-        if (!accessToken) throw new Error("Authentication required");
+        const userId = cookieStore.get("user_id")?.value;
+        if (!userId) throw new Error("User not authenticated");
+
+        // Get refresh token from database
+        const { data: user } = await supabase
+          .from("users")
+          .select("gmail_refresh_token")
+          .eq("id", userId)
+          .single();
+
+        if (!user?.gmail_refresh_token) {
+          throw new Error("Gmail not connected. Please connect your Gmail account first.");
+        }
+
+        const refreshToken = decrypt(user.gmail_refresh_token);
 
         sendProgress(encoder, controller, "Connecting to Gmail", 0, 100);
         const oauth2 = new google.auth.OAuth2(
@@ -476,10 +490,12 @@ export async function POST(request: NextRequest) {
           process.env.GOOGLE_CLIENT_SECRET,
           process.env.GOOGLE_REDIRECT_URI
         );
+        
+        // Set refresh token - OAuth2 client will automatically refresh access token
         oauth2.setCredentials({
-          access_token: accessToken,
           refresh_token: refreshToken,
         });
+        
         const gmail = google.gmail({ version: "v1", auth: oauth2 });
 
         sendProgress(encoder, controller, "Fetching emails", 5, 100);
