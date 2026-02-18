@@ -2,7 +2,7 @@
 
 import { useApplicationStore } from "@/lib/useApplicationStore";
 import { useExcludedEmails } from "@/hooks/useExcludedEmails";
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -28,7 +28,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { CalendarIcon, Search, RefreshCw, Mail, ArrowUp } from "lucide-react";
+import { CalendarIcon, Search, RefreshCw, Mail, ArrowUp, Loader2 } from "lucide-react";
 import { format, subDays, subMonths } from "date-fns";
 import { SidebarTrigger } from "@/components/ui/sidebar";
 
@@ -127,6 +127,8 @@ export default function HomePage() {
     (state) => state.isGmailConnected
   );
   const checkAuthStatus = useApplicationStore((state) => state.checkAuthStatus);
+  const lastSyncTime = useApplicationStore((state) => state.lastSyncTime);
+  const setLastSyncTime = useApplicationStore((state) => state.setLastSyncTime);
 
   const { excludedEmails } = useExcludedEmails();
 
@@ -136,6 +138,8 @@ export default function HomePage() {
   const [searchTerm, setSearchTerm] = useState("");
   const [statusFilter, setStatusFilter] = useState<string>("all");
   const [isProcessing, setIsProcessing] = useState(false);
+  const [isAuthChecking, setIsAuthChecking] = useState(true);
+  const hasAutoSynced = useRef(false);
   const [formError, setFormError] = useState<string | null>(null);
   const [selectedPreset, setSelectedPreset] = useState<string | null>(null);
   const [showBackToTop, setShowBackToTop] = useState(false);
@@ -209,12 +213,33 @@ export default function HomePage() {
 
   // Check auth status on mount
   useEffect(() => {
-    checkAuthStatus();
+    checkAuthStatus().finally(() => setIsAuthChecking(false));
   }, [checkAuthStatus]);
 
-  const handleProcessEmails = async () => {
-    if (!startDate || !endDate) {
-      setFormError("Please select a valid start and end date.");
+  // Auto-sync on page load once auth check completes
+  useEffect(() => {
+    if (isAuthChecking || !isGmailConnected || isProcessing || hasAutoSynced.current) return;
+    hasAutoSynced.current = true;
+
+    const AUTO_SYNC_INTERVAL = 15 * 60 * 1000; // 15 minutes
+    const shouldSync =
+      !lastSyncTime ||
+      Date.now() - new Date(lastSyncTime).getTime() > AUTO_SYNC_INTERVAL;
+
+    if (!shouldSync) return;
+
+    const syncEnd = new Date();
+    const syncStart = lastSyncTime ? new Date(lastSyncTime) : subDays(new Date(), 7);
+    handleProcessEmails(syncStart, syncEnd);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isAuthChecking, isGmailConnected]);
+
+  const handleProcessEmails = async (overrideStart?: Date, overrideEnd?: Date) => {
+    const syncStart = overrideStart || startDate;
+    const syncEnd = overrideEnd || endDate;
+
+    if (!syncStart || !syncEnd) {
+      if (!overrideStart) setFormError("Please select a valid start and end date.");
       return;
     }
 
@@ -237,8 +262,8 @@ export default function HomePage() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          startDate,
-          endDate,
+          startDate: syncStart,
+          endDate: syncEnd,
           excludedEmails,
         }),
       });
@@ -281,6 +306,7 @@ export default function HomePage() {
                 );
 
                 addApplications(newAppsWithDateObjects);
+                setLastSyncTime(new Date());
 
                 if (data.excludedCount > 0) {
                   console.log(
@@ -343,9 +369,14 @@ export default function HomePage() {
           <h1 className="text-xl font-semibold">Dashboard</h1>
         </div>
         <div className="flex items-center gap-2">
-          {isGmailConnected && (
+          {isAuthChecking ? (
+            <Button size="sm" disabled className="w-full sm:w-auto">
+              <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+              Connecting...
+            </Button>
+          ) : isGmailConnected ? (
             <Button
-              onClick={handleProcessEmails}
+              onClick={() => handleProcessEmails()}
               disabled={isProcessing}
               size="sm"
               className="relative w-full sm:w-auto overflow-hidden disabled:opacity-100"
@@ -365,8 +396,7 @@ export default function HomePage() {
                 {getProcessingButtonText()}
               </span>
             </Button>
-          )}
-          {!isGmailConnected && (
+          ) : (
             <Button
               onClick={handleGmailLogin}
               size="sm"

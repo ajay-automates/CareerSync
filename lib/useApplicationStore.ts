@@ -26,6 +26,7 @@ interface ApplicationStore {
   excludedEmails: string[];
   isGmailConnected: boolean;
   userEmail: string;
+  lastSyncTime: Date | null;
   setApplications: (apps: JobApplication[]) => void;
   addApplications: (apps: JobApplication[]) => void;
   removeApplications: (ids: string[]) => void;
@@ -41,6 +42,7 @@ interface ApplicationStore {
   clearExcludedEmails: () => void;
   setAuthStatus: (isAuthenticated: boolean, email: string) => void;
   checkAuthStatus: () => Promise<void>;
+  setLastSyncTime: (date: Date | null) => void;
   logout: () => void;
 }
 
@@ -96,6 +98,7 @@ export const useApplicationStore = create<ApplicationStore>()(
       excludedEmails: [],
       isGmailConnected: false,
       userEmail: "",
+      lastSyncTime: null,
 
       setApplications: (apps) => set({ applications: apps }),
 
@@ -163,6 +166,8 @@ export const useApplicationStore = create<ApplicationStore>()(
 
       clearExcludedEmails: () => set({ excludedEmails: [] }),
 
+      setLastSyncTime: (date) => set({ lastSyncTime: date }),
+
       // Auth methods
       setAuthStatus: (isAuthenticated, email) =>
         set({ isGmailConnected: isAuthenticated, userEmail: email }),
@@ -184,7 +189,7 @@ export const useApplicationStore = create<ApplicationStore>()(
       name: "job-application-storage",
       storage: createJSONStorage(() => localStorage, {
         reviver: (key, value) => {
-          if ((key === "startDate" || key === "endDate" || key === "date") && value) {
+          if ((key === "startDate" || key === "endDate" || key === "date" || key === "lastSyncTime") && value) {
             return new Date(value as string);
           }
           return value;
@@ -195,6 +200,7 @@ export const useApplicationStore = create<ApplicationStore>()(
         excludedEmails: state.excludedEmails,
         startDate: state.startDate,
         endDate: state.endDate,
+        lastSyncTime: state.lastSyncTime,
       }),
     }
   )
